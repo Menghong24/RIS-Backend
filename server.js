@@ -12,7 +12,9 @@ const allowedOrigins = [
   "https://gorgeous-pastelito-4b421c.netlify.app",
   "https://mvwdar.netlify.app",
   "https://m-school-t27v.vercel.app",
-  "http://217.217.252.140"
+  "http://217.217.252.140",
+  "https://217.217.252.140",
+  
 ];
 
 app.use(cors({
