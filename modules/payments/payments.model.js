@@ -51,4 +51,4 @@ paymentSchema.pre('save', function(next) {
   next();
 });
 
-module.exports = mongoose.model("Payment", paymentSchema);
+module.exports = mongoose.model("Payment",  paymentSchema);
