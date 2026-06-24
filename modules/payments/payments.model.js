@@ -4,49 +4,58 @@ const paymentSchema = new mongoose.Schema({
   student: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Student',
+    required: true
   },
-
   class: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Class',
+    required: true
   },
-
+  teacher: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Teacher'
+  },
   startDate: {
     type: Date,
-    required: [true, "Start date is required"]
+    required: true
   },
-
   endDate: {
     type: Date,
-    required: [true, "End date is required"]
+    required: true
   },
-
-  amount: {
+  tuitionFee: {
     type: Number,
-    required: [true, "Amount is required"],
     min: 0,
     default: 0
   },
-
+  extraFee: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  amount: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
   payDate: {
     type: Date
   },
-
   status: {
     type: String,
     enum: ['unpaid', 'paid', 'late'],
     default: 'unpaid'
   },
-
   remark: {
     type: String,
     trim: true
   }
 }, { timestamps: true });
 
-// FIXED: Model name changed from 'Score' to 'Payment'
-// FIXED: Variable name 'paymentSchema' instead of 'playmentSchema'
-const PaymentModel = mongoose.model("Payment", paymentSchema);
+// គណនាទឹកប្រាក់សរុប (amount) ដោយស្វ័យប្រវត្តមុនពេល Save
+paymentSchema.pre('save', function(next) {
+  this.amount = (this.tuitionFee || 0) + (this.extraFee || 0);
+  next();
+});
 
-// FIXED: Exporting 'PaymentModel' instead of 'PlaymentModel'
-module.exports = PaymentModel;
+module.exports = mongoose.model("Payment", paymentSchema);
