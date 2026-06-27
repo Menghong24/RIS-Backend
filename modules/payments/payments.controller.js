@@ -1,4 +1,3 @@
-
 // const StudentModel = require('../models/students.model'); // Needed if we implement advanced name search later
 
 const PaymentModel = require("./payments.model");
@@ -10,11 +9,11 @@ exports.createPayment = async (req, res) => {
     const payment = await PaymentModel.create(req.body);
     
     // 2. Populate related data (Student & Class) immediately so the frontend receives names, not just IDs
+    // ⚡ កែសម្រួល៖ បន្ថែម motherPhone និង joinDate ដើម្បីកុំឱ្យ Frontend លោតបាត់ទិន្នន័យពេលចុចបង់រួច
     const populatedPayment = await payment.populate([
-      { path: 'student', select: 'khmerName englishName studentId' },
-      { path: 'class', select: 'className classGrade' }
-    ]);
-    
+  { path: 'student', select: 'khmerName englishName studentId family joinDate' }, // ⚡ កែទៅជា family
+  { path: 'class', select: 'className classGrade' }
+]);
     res.status(201).send(populatedPayment);
   } catch (err) {
     res.status(400).send({ error: err.message });
@@ -36,10 +35,11 @@ exports.getAllPayments = async (req, res) => {
       query.status = req.query.status;
     }
 
+    // ⚡ កែសម្រួល៖ បន្ថែម motherPhone និង joinDate ទៅក្នុង select នៃ student populate
     const payments = await PaymentModel.find(query)
-      .populate('student', 'khmerName englishName studentId photo gender') // specific fields for student
-      .populate('class', 'className classGrade') // specific fields for class
-      .sort({ createdAt: -1 }); // Sort by newest first
+  .populate('student', 'khmerName englishName studentId photo gender family joinDate') // ⚡ កែទៅជា family
+  .populate('class', 'className classGrade')
+  .sort({ createdAt: -1 }); // Sort by newest first
 
     res.send(payments);
   } catch (err) {
@@ -64,15 +64,16 @@ exports.getOnePayment = async (req, res) => {
   }
 };
 
-// --- UPDATE ---
+// --- UPDATE (PATCH) ---
+// ⚡ កែសម្រួល៖ ប្តូរឈ្មោះទៅជា patchPayment និងប្រើប្រាស់ $set ព្រមទាំងបន្ថែម field ក្នុង populate ឱ្យត្រូវជាមួយ Frontend
 exports.updatePayment = async (req, res) => {
   try {
     const payment = await PaymentModel.findByIdAndUpdate(
       req.params.id, 
-      req.body, 
+      { $set: req.body }, // Update តែ fields ណាដែលផ្ញើមកពី frontend
       { new: true, runValidators: true } // Returns the updated document & checks schema rules
     )
-    .populate('student', 'khmerName englishName studentId')
+    .populate('student', 'khmerName englishName studentId family joinDate')
     .populate('class', 'className classGrade');
       
     if (!payment) {

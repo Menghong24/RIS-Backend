@@ -5,7 +5,7 @@ const { createPayment, getAllPayments, getOnePayment, updatePayment, deletePayme
 const router = Router();
 
 
-router.post('/payments', createPayment)
+
 router.post('/payments', createPayment);
 router.get('/payments', getAllPayments);
 router.get('/payments/:id', getOnePayment);

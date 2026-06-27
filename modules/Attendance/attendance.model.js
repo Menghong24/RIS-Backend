@@ -1,50 +1,74 @@
-const mongoose = require('mongoose');
+const { default: mongoose } = require("mongoose");
 
-const attendanceSchema = new mongoose.Schema({
-  class: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Class', // FIXED: Must match the model name "Class"
-    required: [true, "Class is required"]
-  },
+const attendanceSchema = new mongoose.Schema(
+  {
+    class: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Class",
+      required: true,
+    },
 
-  date: {
-    type: Date,
-    required: [true, "Attendance date is required"]
-  },
+    schoolYear: {
+      type: String,
+      required: true,
+    },
 
-  records: [
-    {
-      student: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Student', // FIXED: Must match the model name "Student"
-        required: true
+    date: {
+      type: Date,
+      required: true,
+    },
+
+    session: {
+      type: String,
+      enum: ["morning", "afternoon", "evening"],
+      default: "morning",
+    },
+
+    records: [
+      {
+        student: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Student",
+          required: true,
+        },
+
+        status: {
+          type: String,
+          enum: ["present", "absent", "permission", "late"],
+          default: "present",
+        },
+
+        remark: {
+          type: String,
+          trim: true,
+        },
+
+        checkedAt: {
+          type: Date,
+          default: Date.now,
+        },
       },
+    ],
 
-      status: {
-        type: String,
-        // Common statuses: Present (វត្តមាន), Absent (អវត្តមាន), Permission (ច្បាប់), Late (យឺត)
-        enum: ['present', 'absent', 'permission', 'late'],
-        default: 'absent'
-      },
-
-      remark: {
-        type: String,
-        trim: true
-      }
-    }
-  ],
-
-  // Optional: Track which teacher/admin marked this
-  markedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User' 
+    markedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+  },
+  {
+    timestamps: true,
   }
+);
 
-}, { timestamps: true });
-
-// --- IMPORTANT IMPROVEMENT ---
-// This ensures you cannot accidentally create TWO attendance documents 
-// for the "Grade 7A" class on "2026-01-07".
-attendanceSchema.index({ class: 1, date: 1 }, { unique: true });
-
-module.exports = mongoose.model('Attendance', attendanceSchema);
+attendanceSchema.index(
+  {
+    class: 1,
+    date: 1,
+    session: 1,
+  },
+  {
+    unique: true,
+  }
+);
+const AttendanceModel = mongoose.model("Attendance", attendanceSchema);
+module.exports = AttendanceModel;

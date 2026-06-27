@@ -48,12 +48,10 @@ const studentSchema = new mongoose.Schema(
       ref: "Class",
       // required: [true, "Class/Grade assignment is required"],
     },
-
    
-    phone: {
-      type: String,
-      required: [true, "It is required."],
-      trim: true,
+    joinDate: {
+    type: Date,
+    required: [true, "It is required."],
     },
 
     // Detailed Info
