@@ -1,25 +1,58 @@
 const { Router } = require("express");
-const { 
-  saveScore, 
-  getScoresByClass, 
-  deleteScore 
-} = require("./scores.controller"); 
+
+const {
+  saveScore,
+  getScoresByClass,
+  deleteScore
+} = require("./scores.controller");
+
 const { protect } = require("../shared/protect");
 const { authorize } = require("../shared/authorize");
+const { canAccessClass } = require("../shared/teacherAccess");
 
 const router = Router();
 
-// --- Read ---
-// Both admins and teachers can view scores
-router.get("/scores", protect, authorize(["admin", "teacher"]), getScoresByClass); 
+// ==============================
+// Scores - Admin & Teacher
+// ==============================
 
-// --- Create & Update (Upsert) ---
-// Both admins and teachers can enter or modify scores
-router.post("/scores", protect, authorize(["admin", "teacher"]), saveScore); 
-router.put("/scores", protect, authorize(["admin", "teacher"]), saveScore); 
+// GET /scores?classId=...&subjectId=...&month=...&academicYear=...
+router.get(
+  "/scores",
+  protect,
+  authorize(["admin", "teacher"]),
+  canAccessClass,
+  getScoresByClass
+);
 
-// --- Delete ---
-// Optional: Maybe only admins are allowed to permanently delete a score record
-router.delete("/scores/:id", protect, authorize(["admin"]), deleteScore);
+// POST /scores
+router.post(
+  "/scores",
+  protect,
+  authorize(["admin", "teacher"]),
+  canAccessClass,
+  saveScore
+);
+
+// PUT /scores
+router.put(
+  "/scores",
+  protect,
+  authorize(["admin", "teacher"]),
+  canAccessClass,
+  saveScore
+);
+
+// ==============================
+// Scores Delete - Admin Only
+// ==============================
+
+// DELETE /scores/:id
+router.delete(
+  "/scores/:id",
+  protect,
+  authorize("admin"),
+  deleteScore
+);
 
 module.exports = router;

@@ -1,16 +1,83 @@
 const { Router } = require("express");
-const { createUser, loginUser, getProfile, logOut, findAllUser, deleteUser, updateUser } = require("./users.controller");
+
+const {
+  createUser,
+  loginUser,
+  getProfile,
+  logOut,
+  findAllUser,
+  deleteUser,
+  updateUser,
+  updateProfileImage,
+  removeProfileImage
+} = require("./users.controller");
+
 const { protect } = require("../shared/protect");
 const { authorize } = require("../shared/authorize");
 
-const router = Router()
+const {
+  uploadProfile,
+  uploadProfileErrorHandler
+} = require("../shared/uploadProfile");
 
-router.post("/user/signup", createUser)
-router.get("/user/profile", protect , getProfile)
-router.post("/user/login", loginUser)
-router.post("/user/logout", protect, logOut)
-router.get("/user", protect, authorize(["admin"]), findAllUser)
-router.delete("/user/:id", protect, authorize(["admin"]), deleteUser)
-router.patch("/user/:id", protect, authorize(["admin"]), updateUser)
+const router = Router();
 
-module.exports = router
+// ==============================
+// Auth
+// ==============================
+
+router.post("/user/signup", createUser);
+
+router.post("/user/login", loginUser);
+
+router.post("/user/logout", protect, logOut);
+
+router.get("/user/profile", protect, getProfile);
+
+// ==============================
+// Profile Image
+// ==============================
+
+// PATCH /user/profile-image
+// field name: profileImage
+router.patch(
+  "/user/profile-image",
+  protect,
+  uploadProfile.single("profileImage"),
+  uploadProfileErrorHandler,
+  updateProfileImage
+);
+
+// DELETE /user/profile-image
+router.delete(
+  "/user/profile-image",
+  protect,
+  removeProfileImage
+);
+
+// ==============================
+// User Management - Admin Only
+// ==============================
+
+router.get(
+  "/user",
+  protect,
+  authorize("admin"),
+  findAllUser
+);
+
+router.patch(
+  "/user/:id",
+  protect,
+  authorize("admin"),
+  updateUser
+);
+
+router.delete(
+  "/user/:id",
+  protect,
+  authorize("admin"),
+  deleteUser
+);
+
+module.exports = router;

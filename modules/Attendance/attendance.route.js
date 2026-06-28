@@ -1,37 +1,62 @@
 const { Router } = require("express");
+
 const {
   getAttendance,
   saveAttendance,
-  getAttendanceReport,
-  // getAttendanceReport,
-  // deleteAttendance,
+  getAttendanceReport
+  // deleteAttendance
 } = require("./attendance.controller");
+
+const { protect } = require("../shared/protect");
+const { authorize } = require("../shared/authorize");
+const { canAccessClass } = require("../shared/teacherAccess");
 
 const router = Router();
 
 // ==============================
-// Attendance
+// Attendance Report - Admin Only
 // ==============================
 
-// Get attendance by class & date
-// GET /attendance?classId=...&date=...
-router.get("/attendance", getAttendance);
-
-// Create or Update attendance
-// POST /attendance
-router.post("/attendance", saveAttendance);
-router.get("/attendance/report", getAttendanceReport);
-
-// ==============================
-// Future APIs
-// ==============================
-
-// Attendance report
 // GET /attendance/report
-// router.get("/attendance/report", getAttendanceReport);
+router.get(
+  "/attendance/report",
+  protect,
+  authorize("admin"),
+  getAttendanceReport
+);
 
-// Delete attendance
+// ==============================
+// Attendance - Admin & Teacher
+// ==============================
+
+// GET /attendance?classId=...&date=...
+router.get(
+  "/attendance",
+  protect,
+  authorize(["admin", "teacher"]),
+  canAccessClass,
+  getAttendance
+);
+
+// POST /attendance
+router.post(
+  "/attendance",
+  protect,
+  authorize(["admin", "teacher"]),
+  canAccessClass,
+  saveAttendance
+);
+
+// ==============================
+// Future API
+// ==============================
+
 // DELETE /attendance/:id
-// router.delete("/attendance/:id", deleteAttendance);
+// router.delete(
+//   "/attendance/:id",
+//   protect,
+//   authorize("admin"),
+//   deleteAttendance
+// );
 
 module.exports = router;

@@ -1,13 +1,46 @@
+const mongoose = require("mongoose");
 const TeacherModel = require("./teachers.model");
+const { removeLocalFile } = require("../shared/removeLocalFile");
 
+const getUploadedTeacherImagePath = (req) => {
+  if (!req.file?.filename) return "";
+
+  return `/uploads/teachers/${req.file.filename}`;
+};
+
+const removeUploadedFileIfExists = (req) => {
+  const uploadedImagePath = getUploadedTeacherImagePath(req);
+
+  if (uploadedImagePath) {
+    removeLocalFile(uploadedImagePath);
+  }
+};
+
+const normalizeTeacherPayload = (body = {}) => {
+  const payload = { ...body };
+
+  return payload;
+};
 
 // --- CREATE ---
 exports.createTeacher = async (req, res) => {
   try {
-    const result = await TeacherModel.create(req.body);
-    res.status(201).send(result);
+    const payload = normalizeTeacherPayload(req.body);
+    const uploadedImagePath = getUploadedTeacherImagePath(req);
+
+    if (uploadedImagePath) {
+      payload.profileImage = uploadedImagePath;
+    }
+
+    const result = await TeacherModel.create(payload);
+
+    return res.status(201).send(result);
   } catch (err) {
-    res.status(400).send({ error: err.message });
+    removeUploadedFileIfExists(req);
+
+    return res.status(400).send({
+      err: err.message
+    });
   }
 };
 
@@ -15,23 +48,34 @@ exports.createTeacher = async (req, res) => {
 exports.getAllTeacher = async (req, res) => {
   try {
     let query = {};
-    
-    // FIX: Search across Khmer Name, English Name, and Skill
-    if (req.query.search) {
-      const searchRegex = { $regex: req.query.search, $options: "i" };
+    const search = String(req.query.search || "").trim();
+
+    if (search) {
+      const searchRegex = {
+        $regex: search,
+        $options: "i"
+      };
+
       query = {
         $or: [
           { khmerName: searchRegex },
           { englishName: searchRegex },
-          { skill: searchRegex }
+          { skill: searchRegex },
+          { phone: searchRegex },
+          { email: searchRegex }
         ]
       };
     }
 
-    const result = await TeacherModel.find(query).sort({ createdAt: -1 }); // Newest first
-    res.send(result);
+    const result = await TeacherModel.find(query).sort({
+      createdAt: -1
+    });
+
+    return res.send(result);
   } catch (err) {
-    res.status(500).send({ error: err.message });
+    return res.status(500).send({
+      err: err.message || "Internal server error"
+    });
   }
 };
 
@@ -39,13 +83,26 @@ exports.getAllTeacher = async (req, res) => {
 exports.getOneTeacher = async (req, res) => {
   try {
     const id = req.params.id;
-    const result = await TeacherModel.findById(id);
-    if (!result) {
-      return res.status(404).send({ error: "Teacher not found" });
+
+    if (!mongoose.Types.ObjectId.isValid(String(id || ""))) {
+      return res.status(400).send({
+        err: "Teacher ID មិនត្រឹមត្រូវ"
+      });
     }
-    res.send(result);
+
+    const result = await TeacherModel.findById(id);
+
+    if (!result) {
+      return res.status(404).send({
+        err: "Teacher not found"
+      });
+    }
+
+    return res.send(result);
   } catch (err) {
-    res.status(500).send({ error: err.message });
+    return res.status(500).send({
+      err: err.message || "Internal server error"
+    });
   }
 };
 
@@ -53,13 +110,48 @@ exports.getOneTeacher = async (req, res) => {
 exports.updateTeacher = async (req, res) => {
   try {
     const id = req.params.id;
-    const result = await TeacherModel.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
-    if (!result) {
-      return res.status(404).send({ error: "Teacher not found" });
+
+    if (!mongoose.Types.ObjectId.isValid(String(id || ""))) {
+      removeUploadedFileIfExists(req);
+
+      return res.status(400).send({
+        err: "Teacher ID មិនត្រឹមត្រូវ"
+      });
     }
-    res.send(result);
+
+    const existingTeacher = await TeacherModel.findById(id);
+
+    if (!existingTeacher) {
+      removeUploadedFileIfExists(req);
+
+      return res.status(404).send({
+        err: "Teacher not found"
+      });
+    }
+
+    const payload = normalizeTeacherPayload(req.body);
+    const uploadedImagePath = getUploadedTeacherImagePath(req);
+
+    if (uploadedImagePath) {
+      if (existingTeacher.profileImage) {
+        removeLocalFile(existingTeacher.profileImage);
+      }
+
+      payload.profileImage = uploadedImagePath;
+    }
+
+    const result = await TeacherModel.findByIdAndUpdate(id, payload, {
+      new: true,
+      runValidators: true
+    });
+
+    return res.send(result);
   } catch (err) {
-    res.status(500).send({ error: err.message });
+    removeUploadedFileIfExists(req);
+
+    return res.status(500).send({
+      err: err.message || "Internal server error"
+    });
   }
 };
 
@@ -67,12 +159,32 @@ exports.updateTeacher = async (req, res) => {
 exports.deleteTeacher = async (req, res) => {
   try {
     const id = req.params.id;
-    const result = await TeacherModel.findByIdAndDelete(id);
-    if (!result) {
-      return res.status(404).send({ error: "Teacher not found" });
+
+    if (!mongoose.Types.ObjectId.isValid(String(id || ""))) {
+      return res.status(400).send({
+        err: "Teacher ID មិនត្រឹមត្រូវ"
+      });
     }
-    res.send({ message: "Teacher deleted successfully", deletedTeacher: result });
+
+    const result = await TeacherModel.findByIdAndDelete(id);
+
+    if (!result) {
+      return res.status(404).send({
+        err: "Teacher not found"
+      });
+    }
+
+    if (result.profileImage) {
+      removeLocalFile(result.profileImage);
+    }
+
+    return res.send({
+      msg: "Teacher deleted successfully",
+      result
+    });
   } catch (err) {
-    res.status(500).send({ error: err.message });
+    return res.status(500).send({
+      err: err.message || "Internal server error"
+    });
   }
 };
