@@ -11,13 +11,23 @@ dotenv.config();
 const app = express();
 
 const uploadRoot = path.join(process.cwd(), "uploads");
-const profileUploadDir = path.join(uploadRoot, "profiles");
+const uploadFolders = ["profiles", "students", "teachers"];
 
-if (!fs.existsSync(profileUploadDir)) {
-  fs.mkdirSync(profileUploadDir, {
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, {
     recursive: true
   });
 }
+
+uploadFolders.forEach((folder) => {
+  const folderPath = path.join(uploadRoot, folder);
+
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, {
+      recursive: true
+    });
+  }
+});
 
 // ==============================
 // Middlewares
@@ -31,11 +41,11 @@ app.use(
 );
 
 // Serve uploaded files
-// Example: /uploads/profiles/profile-userid-date.png
-app.use(
-  "/uploads",
-  express.static(uploadRoot)
-);
+// Examples:
+// /uploads/profiles/profile-userid-date.png
+// /uploads/students/students-id-date.png
+// /uploads/teachers/teachers-id-date.png
+app.use("/uploads", express.static(uploadRoot));
 
 // ==============================
 // CORS
@@ -43,10 +53,17 @@ app.use(
 
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:3000",
   "https://m-school-t27v.vercel.app",
   "http://217.217.252.140",
-  "https://217.217.252.140"
+  "https://217.217.252.140",
+  "http://217.217.252.140:3000",
+  "http://217.217.252.140:5173"
 ];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL.replace(/\/$/, ""));
+}
 
 app.use(
   cors({
@@ -59,10 +76,6 @@ app.use(
 
       if (allowedOrigins.includes(cleanOrigin)) {
         return callback(null, true);
-      }
-
-      if (process.env.NODE_ENV !== "production") {
-        console.log("Blocked CORS:", origin);
       }
 
       return callback(new Error("Not allowed by CORS"));

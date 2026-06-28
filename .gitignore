@@ -1,5 +1,10 @@
 node_modules
 .env
+
 uploads/*
 !uploads/profiles/
 !uploads/profiles/.gitkeep
+!uploads/students/
+!uploads/students/.gitkeep
+!uploads/teachers/
+!uploads/teachers/.gitkeep
