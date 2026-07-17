@@ -10,41 +10,47 @@ const isValidObjectId = (value) => {
   return mongoose.Types.ObjectId.isValid(toIdString(value));
 };
 
+const getUserRole = (req) => {
+  return String(req.user?.role || "").toLowerCase();
+};
+
 const getUserTeacherId = (req) => {
-  return toIdString(req.user?.teacher);
+  return toIdString(req.user?.teacher?._id || req.user?.teacher);
 };
 
 const getClassIdFromRequest = (req) => {
   return (
-    req.params.classId ||
-    req.params.id ||
-    req.query.classId ||
-    req.query.class ||
-    req.body.classId ||
-    req.body.class ||
-    req.body.scores?.[0]?.classId ||
-    req.body.scores?.[0]?.class
+    toIdString(req.params?.classId) ||
+    toIdString(req.query?.classId) ||
+    toIdString(req.query?.class) ||
+    toIdString(req.body?.classId) ||
+    toIdString(req.body?.class) ||
+    toIdString(req.body?.scores?.[0]?.classId) ||
+    toIdString(req.body?.scores?.[0]?.class) ||
+    ""
   );
 };
 
 const getStudentIdFromRequest = (req) => {
   return (
-    req.params.studentId ||
-    req.params.id ||
-    req.query.studentId ||
-    req.query.student ||
-    req.body.studentId ||
-    req.body.student
+    toIdString(req.params?.studentId) ||
+    toIdString(req.query?.studentId) ||
+    toIdString(req.query?.student) ||
+    toIdString(req.body?.studentId) ||
+    toIdString(req.body?.student) ||
+    ""
   );
 };
 
 const canAccessClass = async (req, res, next) => {
   try {
-    if (req.user?.role === "admin") {
+    const role = getUserRole(req);
+
+    if (role === "admin") {
       return next();
     }
 
-    if (req.user?.role !== "teacher") {
+    if (role !== "teacher") {
       return res.status(403).send({
         err: "អ្នកមិនមានសិទ្ធិប្រើប្រាស់ទិន្នន័យនេះទេ"
       });
@@ -52,7 +58,7 @@ const canAccessClass = async (req, res, next) => {
 
     const teacherId = getUserTeacherId(req);
 
-    if (!teacherId) {
+    if (!teacherId || !isValidObjectId(teacherId)) {
       return res.status(403).send({
         err: "គណនីគ្រូនេះមិនទាន់ភ្ជាប់ទៅ Teacher profile ទេ"
       });
@@ -62,7 +68,7 @@ const canAccessClass = async (req, res, next) => {
 
     if (!classId) {
       return res.status(400).send({
-        err: "សូមផ្ញើ classId"
+        err: "សូមផ្ញើ classId ឬ class"
       });
     }
 
@@ -73,7 +79,7 @@ const canAccessClass = async (req, res, next) => {
     }
 
     const foundClass = await ClassesModel.findOne({
-      _id: toIdString(classId),
+      _id: classId,
       teacher: teacherId
     }).select("_id");
 
@@ -83,7 +89,7 @@ const canAccessClass = async (req, res, next) => {
       });
     }
 
-    next();
+    return next();
   } catch (err) {
     return res.status(500).send({
       err: err.message || "Internal server error"
@@ -93,11 +99,13 @@ const canAccessClass = async (req, res, next) => {
 
 const canAccessStudent = async (req, res, next) => {
   try {
-    if (req.user?.role === "admin") {
+    const role = getUserRole(req);
+
+    if (role === "admin") {
       return next();
     }
 
-    if (req.user?.role !== "teacher") {
+    if (role !== "teacher") {
       return res.status(403).send({
         err: "អ្នកមិនមានសិទ្ធិប្រើប្រាស់ទិន្នន័យនេះទេ"
       });
@@ -105,7 +113,7 @@ const canAccessStudent = async (req, res, next) => {
 
     const teacherId = getUserTeacherId(req);
 
-    if (!teacherId) {
+    if (!teacherId || !isValidObjectId(teacherId)) {
       return res.status(403).send({
         err: "គណនីគ្រូនេះមិនទាន់ភ្ជាប់ទៅ Teacher profile ទេ"
       });
@@ -115,7 +123,7 @@ const canAccessStudent = async (req, res, next) => {
 
     if (!studentId) {
       return res.status(400).send({
-        err: "សូមផ្ញើ studentId"
+        err: "សូមផ្ញើ studentId ឬ student"
       });
     }
 
@@ -133,7 +141,7 @@ const canAccessStudent = async (req, res, next) => {
     const studentIds = teacherClasses.flatMap((cls) => cls.students || []);
 
     const student = await StudentModel.findOne({
-      _id: toIdString(studentId),
+      _id: studentId,
       $or: [
         { _id: { $in: studentIds } },
         { grade: { $in: classIds } },
@@ -148,7 +156,7 @@ const canAccessStudent = async (req, res, next) => {
       });
     }
 
-    next();
+    return next();
   } catch (err) {
     return res.status(500).send({
       err: err.message || "Internal server error"

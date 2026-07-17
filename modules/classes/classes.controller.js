@@ -7,11 +7,15 @@ const getUserTeacherId = (req) => {
 };
 
 const isTeacher = (req) => {
-  return req.user?.role === "teacher";
+  return String(req.user?.role || "").toLowerCase() === "teacher";
+};
+
+const getId = (value) => {
+  return String(value?._id || value || "").trim();
 };
 
 const isValidObjectId = (id) => {
-  return mongoose.Types.ObjectId.isValid(String(id || ""));
+  return mongoose.Types.ObjectId.isValid(getId(id));
 };
 
 const buildClassSearchQuery = (search) => {
@@ -35,22 +39,121 @@ const buildClassSearchQuery = (search) => {
   };
 };
 
-const normalizeStudentIds = ({ studentId, studentIds }) => {
+const normalizeStudentIds = ({ studentId, studentIds } = {}) => {
   if (Array.isArray(studentIds) && studentIds.length > 0) {
-    return studentIds.map((id) => String(id).trim()).filter(Boolean);
+    return studentIds
+      .map((id) => getId(id))
+      .filter(Boolean);
   }
 
   if (studentId) {
-    return [String(studentId).trim()];
+    return [getId(studentId)];
   }
 
   return [];
 };
 
+const uniqueObjectIds = (ids = []) => {
+  return [...new Set(ids.map(getId).filter(isValidObjectId))];
+};
+
 const populateClass = (query) => {
-  return query
-    .populate("students")
-    .populate("teacher");
+  return query.populate("students").populate("teacher");
+};
+
+const getStudentClassIds = (student) => {
+  return uniqueObjectIds([
+    student?.grade,
+    student?.class,
+    student?.classId,
+    ...(Array.isArray(student?.classes) ? student.classes : []),
+    ...(Array.isArray(student?.classIds) ? student.classIds : [])
+  ]);
+};
+
+const removeStudentsFromClasses = async (studentIds = [], classIds = []) => {
+  const cleanStudentIds = uniqueObjectIds(studentIds);
+  const cleanClassIds = uniqueObjectIds(classIds);
+
+  if (cleanStudentIds.length === 0 || cleanClassIds.length === 0) {
+    return;
+  }
+
+  await ClassesModel.updateMany(
+    {
+      _id: {
+        $in: cleanClassIds
+      }
+    },
+    {
+      $pull: {
+        students: {
+          $in: cleanStudentIds
+        }
+      }
+    }
+  );
+};
+
+const syncStudentsToClass = async (studentIds = [], classId) => {
+  const cleanStudentIds = uniqueObjectIds(studentIds);
+
+  if (cleanStudentIds.length === 0 || !isValidObjectId(classId)) {
+    return;
+  }
+
+  await StudentModel.updateMany(
+    {
+      _id: {
+        $in: cleanStudentIds
+      }
+    },
+    {
+      $set: {
+        grade: classId,
+        class: classId,
+        classId: classId
+      },
+      $addToSet: {
+        classes: classId,
+        classIds: classId
+      }
+    }
+  );
+};
+
+const unsyncStudentsFromClass = async (studentIds = [], classId) => {
+  const cleanStudentIds = uniqueObjectIds(studentIds);
+
+  if (cleanStudentIds.length === 0 || !isValidObjectId(classId)) {
+    return;
+  }
+
+  await StudentModel.updateMany(
+    {
+      _id: {
+        $in: cleanStudentIds
+      },
+      $or: [
+        { grade: classId },
+        { class: classId },
+        { classId: classId },
+        { classes: classId },
+        { classIds: classId }
+      ]
+    },
+    {
+      $unset: {
+        grade: "",
+        class: "",
+        classId: ""
+      },
+      $pull: {
+        classes: classId,
+        classIds: classId
+      }
+    }
+  );
 };
 
 // --- CREATE ---
@@ -85,7 +188,6 @@ exports.findAllClass = async (req, res) => {
       ...buildClassSearchQuery(req.query.search)
     };
 
-    // Teacher មើលបានតែថ្នាក់របស់ខ្លួន
     if (isTeacher(req)) {
       const teacherId = getUserTeacherId(req);
 
@@ -167,6 +269,18 @@ exports.updateClass = async (req, res) => {
       });
     }
 
+    const existingClass = await ClassesModel.findById(id).select("students");
+
+    if (!existingClass) {
+      return res.status(404).send({
+        err: "Class not found"
+      });
+    }
+
+    const oldStudentIds = Array.isArray(existingClass.students)
+      ? existingClass.students.map(getId)
+      : [];
+
     const result = await ClassesModel.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true
@@ -174,13 +288,40 @@ exports.updateClass = async (req, res) => {
       .populate("students")
       .populate("teacher");
 
-    if (!result) {
-      return res.status(404).send({
-        err: "Class not found"
-      });
+    const newStudentIds = Array.isArray(result.students)
+      ? result.students.map(getId)
+      : [];
+
+    const removedStudentIds = oldStudentIds.filter((studentId) => {
+      return !newStudentIds.includes(studentId);
+    });
+
+    const addedStudentIds = newStudentIds.filter((studentId) => {
+      return !oldStudentIds.includes(studentId);
+    });
+
+    if (removedStudentIds.length > 0) {
+      await unsyncStudentsFromClass(removedStudentIds, id);
     }
 
-    return res.send(result);
+    if (addedStudentIds.length > 0) {
+      const addedStudents = await StudentModel.find({
+        _id: {
+          $in: addedStudentIds
+        }
+      }).select("grade class classId classes classIds");
+
+      const oldClassIds = uniqueObjectIds(
+        addedStudents.flatMap((student) => getStudentClassIds(student))
+      ).filter((oldClassId) => oldClassId !== getId(id));
+
+      await removeStudentsFromClasses(addedStudentIds, oldClassIds);
+      await syncStudentsToClass(addedStudentIds, id);
+    }
+
+    const populated = await populateClass(ClassesModel.findById(id));
+
+    return res.send(populated);
   } catch (err) {
     if (err.code === 11000) {
       return res.status(409).send({
@@ -214,13 +355,34 @@ exports.deleteClass = async (req, res) => {
       });
     }
 
+    const studentIds = Array.isArray(result.students)
+      ? result.students.map(getId)
+      : [];
+
     await StudentModel.updateMany(
       {
-        grade: id
+        $or: [
+          { grade: id },
+          { class: id },
+          { classId: id },
+          { classes: id },
+          { classIds: id },
+          {
+            _id: {
+              $in: studentIds
+            }
+          }
+        ]
       },
       {
         $unset: {
-          grade: ""
+          grade: "",
+          class: "",
+          classId: ""
+        },
+        $pull: {
+          classes: id,
+          classIds: id
         }
       }
     );
@@ -277,7 +439,7 @@ exports.enrollStudent = async (req, res) => {
       _id: {
         $in: idsProcess
       }
-    }).select("_id grade");
+    }).select("grade class classId classes classIds");
 
     if (students.length !== idsProcess.length) {
       return res.status(404).send({
@@ -285,29 +447,15 @@ exports.enrollStudent = async (req, res) => {
       });
     }
 
-    // Remove students from old classes
-    const oldClassIds = students
-      .map((student) => student.grade)
-      .filter((oldClassId) => oldClassId && String(oldClassId) !== String(classId));
+    const oldClassIds = uniqueObjectIds(
+      students.flatMap((student) => getStudentClassIds(student))
+    ).filter((oldClassId) => oldClassId !== getId(classId));
 
     if (oldClassIds.length > 0) {
-      await ClassesModel.updateMany(
-        {
-          _id: {
-            $in: oldClassIds
-          }
-        },
-        {
-          $pull: {
-            students: {
-              $in: idsProcess
-            }
-          }
-        }
-      );
+      await removeStudentsFromClasses(idsProcess, oldClassIds);
     }
 
-    const updatedClass = await ClassesModel.findByIdAndUpdate(
+    await ClassesModel.findByIdAndUpdate(
       classId,
       {
         $addToSet: {
@@ -320,22 +468,13 @@ exports.enrollStudent = async (req, res) => {
         new: true,
         runValidators: true
       }
-    )
+    );
+
+    await syncStudentsToClass(idsProcess, classId);
+
+    const updatedClass = await ClassesModel.findById(classId)
       .populate("students")
       .populate("teacher");
-
-    await StudentModel.updateMany(
-      {
-        _id: {
-          $in: idsProcess
-        }
-      },
-      {
-        $set: {
-          grade: classId
-        }
-      }
-    );
 
     return res.status(200).send({
       msg: "Students enrolled successfully.",
@@ -389,11 +528,7 @@ exports.removeStudentFromClass = async (req, res) => {
       });
     }
 
-    await StudentModel.findByIdAndUpdate(studentId, {
-      $unset: {
-        grade: ""
-      }
-    });
+    await unsyncStudentsFromClass([studentId], classId);
 
     return res.status(200).send({
       msg: "Student removed from class.",

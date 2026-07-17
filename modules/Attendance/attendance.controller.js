@@ -1,5 +1,83 @@
+const mongoose = require("mongoose");
+
 const ClassesModel = require("../classes/classes.model");
 const AttendanceModel = require("./attendance.model");
+const StudentModel = require("../students/students.model");
+
+const isAdmin = (req) => req.user?.role === "admin";
+const isTeacher = (req) => req.user?.role === "teacher";
+
+const getUserTeacherId = (req) => {
+  return String(req.user?.teacher?._id || req.user?.teacher || "");
+};
+
+const isValidObjectId = (id) => {
+  return mongoose.Types.ObjectId.isValid(String(id || ""));
+};
+
+const getStartOfDay = (date) => {
+  const startOfDay = new Date(date);
+  startOfDay.setHours(0, 0, 0, 0);
+  return startOfDay;
+};
+
+const getEndOfDay = (date) => {
+  const endOfDay = new Date(date);
+  endOfDay.setHours(23, 59, 59, 999);
+  return endOfDay;
+};
+
+const getSchoolYearFromDate = (date) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  return `${year}-${year + 1}`;
+};
+
+const canTeacherAccessClass = async (req, classId) => {
+  if (isAdmin(req)) return true;
+  if (!isTeacher(req)) return false;
+
+  const teacherId = getUserTeacherId(req);
+
+  if (!teacherId || !isValidObjectId(classId)) {
+    return false;
+  }
+
+  const foundClass = await ClassesModel.findOne({
+    _id: classId,
+    teacher: teacherId
+  }).select("_id");
+
+  return Boolean(foundClass);
+};
+
+const populateAttendanceStudents = (query) => {
+  return query.populate(
+    "records.student",
+    "khmerName englishName studentId gender profileImage grade"
+  );
+};
+
+const normalizeRecordStudentId = (record = {}) => {
+  return String(record.student?._id || record.student || "");
+};
+
+const normalizeAttendanceRecords = (records = []) => {
+  return records.map((record) => ({
+    student: record.student?._id || record.student,
+    status: record.status || "present",
+    remark: record.remark || ""
+  }));
+};
+
+const getClassStudents = async (classId) => {
+  const classData = await ClassesModel.findById(classId).populate(
+    "students",
+    "khmerName englishName studentId gender profileImage grade"
+  );
+
+  return classData;
+};
 
 // ==============================
 // GET ATTENDANCE
@@ -9,50 +87,53 @@ exports.getAttendance = async (req, res) => {
     const { classId, date, session } = req.query;
 
     if (!classId || !date) {
-      return res.status(400).json({
-        success: false,
-        message: "Class ID and Date are required.",
+      return res.status(400).send({
+        err: "Class ID and Date are required"
       });
     }
 
-    // Normalize date
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
+    if (!isValidObjectId(classId)) {
+      return res.status(400).send({
+        err: "Class ID មិនត្រឹមត្រូវ"
+      });
+    }
 
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    const allowed = await canTeacherAccessClass(req, classId);
 
-    // ស្វែងរកតាមលក្ខខណ្ឌ Class, Date និង Session
-    const attendance = await AttendanceModel.findOne({
-      class: classId,
-      date: {
-        $gte: startOfDay,
-        $lte: endOfDay,
-      },
-      session: session || "morning", 
-    }).populate(
-      "records.student",
-      "khmerName englishName studentId gender photo"
+    if (!allowed) {
+      return res.status(403).send({
+        err: "អ្នកមិនមានសិទ្ធិមើលវត្តមានថ្នាក់នេះទេ"
+      });
+    }
+
+    const startOfDay = getStartOfDay(date);
+    const endOfDay = getEndOfDay(date);
+    const finalSession = session || "morning";
+
+    const attendance = await populateAttendanceStudents(
+      AttendanceModel.findOne({
+        class: classId,
+        date: {
+          $gte: startOfDay,
+          $lte: endOfDay
+        },
+        session: finalSession
+      })
     );
 
     if (attendance) {
-      return res.status(200).json({
+      return res.status(200).send({
         success: true,
         mode: "edit",
-        data: attendance,
+        data: attendance
       });
     }
 
-    // បើមិនទាន់មានទិន្នន័យ ទៅទាញយកបញ្ជីឈ្មោះសិស្សមកបង្កើតទម្រង់ទទេ
-    const classData = await ClassesModel.findById(classId).populate(
-      "students",
-      "khmerName englishName studentId gender photo"
-    );
+    const classData = await getClassStudents(classId);
 
     if (!classData) {
-      return res.status(404).json({
-        success: false,
-        message: "Class not found.",
+      return res.status(404).send({
+        err: "Class not found"
       });
     }
 
@@ -61,172 +142,240 @@ exports.getAttendance = async (req, res) => {
     const blankRecords = studentsList.map((student) => ({
       student,
       status: "present",
-      remark: "",
+      remark: ""
     }));
 
-    return res.status(200).json({
+    return res.status(200).send({
       success: true,
       mode: "create",
       data: {
         class: classId,
         date,
-        session: session || "morning",
-        records: blankRecords,
-      },
+        session: finalSession,
+        schoolYear: getSchoolYearFromDate(date),
+        records: blankRecords
+      }
     });
   } catch (err) {
-    console.error("Attendance GET Error:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message,
+    return res.status(500).send({
+      err: err.message || "Internal server error"
     });
   }
 };
 
 // ==============================
-// SAVE ATTENDANCE (Updated)
+// SAVE ATTENDANCE
 // ==============================
 exports.saveAttendance = async (req, res) => {
   try {
-    // ១. ចាប់យក session និង schoolYear បន្ថែមពី req.body
-    const { class: classId, date, session, schoolYear, records } = req.body;
+    const {
+      class: classId,
+      classId: legacyClassId,
+      date,
+      session,
+      schoolYear,
+      records
+    } = req.body;
 
-    if (!classId || !date) {
-      return res.status(400).json({
-        success: false,
-        message: "Class and Date are required.",
+    const finalClassId = classId || legacyClassId;
+
+    if (!finalClassId || !date) {
+      return res.status(400).send({
+        err: "Class and Date are required"
+      });
+    }
+
+    if (!isValidObjectId(finalClassId)) {
+      return res.status(400).send({
+        err: "Class ID មិនត្រឹមត្រូវ"
       });
     }
 
     if (!Array.isArray(records) || records.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Attendance records are required.",
+      return res.status(400).send({
+        err: "Attendance records are required"
       });
     }
 
-    // Prevent duplicate students
-    const ids = records.map((r) =>
-      (r.student._id || r.student).toString()
+    const allowed = await canTeacherAccessClass(req, finalClassId);
+
+    if (!allowed) {
+      return res.status(403).send({
+        err: "អ្នកមិនមានសិទ្ធិបញ្ចូលវត្តមានថ្នាក់នេះទេ"
+      });
+    }
+
+    const classData = await ClassesModel.findById(finalClassId).select(
+      "_id students teacher"
     );
 
-    if (new Set(ids).size !== ids.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Duplicate student found.",
+    if (!classData) {
+      return res.status(404).send({
+        err: "Class not found"
       });
     }
 
-    // Normalize date
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
+    const classStudentIds = (classData.students || []).map((studentId) =>
+      String(studentId)
+    );
 
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    const recordStudentIds = records.map(normalizeRecordStudentId);
 
-    // ២. បង្កើតប្រព័ន្ធការពារ៖ បើគ្មាន schoolYear ផ្ញើមក វានឹងបង្កើតតាមឆ្នាំនៃកាលបរិច្ឆេទ (ការពារការគាំង Schema)
-    const currentYear = startOfDay.getFullYear();
-    const finalSchoolYear = schoolYear || `${currentYear}-${currentYear + 1}`;
+    if (recordStudentIds.some((studentId) => !isValidObjectId(studentId))) {
+      return res.status(400).send({
+        err: "Student ID មិនត្រឹមត្រូវ"
+      });
+    }
+
+    if (new Set(recordStudentIds).size !== recordStudentIds.length) {
+      return res.status(400).send({
+        err: "Duplicate student found"
+      });
+    }
+
+    const invalidStudent = recordStudentIds.find((studentId) => {
+      return !classStudentIds.includes(String(studentId));
+    });
+
+    if (invalidStudent) {
+      return res.status(400).send({
+        err: "Some students are not in this class anymore"
+      });
+    }
+
+    const startOfDay = getStartOfDay(date);
+    const endOfDay = getEndOfDay(date);
     const finalSession = session || "morning";
+    const finalSchoolYear = schoolYear || getSchoolYearFromDate(date);
 
-    // ៣. រក្សាទុក ឬធ្វើបច្ចុប្បន្នភាព ដោយផ្អែកលើ Class, Date, និង Session
     const attendance = await AttendanceModel.findOneAndUpdate(
       {
-        class: classId,
+        class: finalClassId,
         date: {
           $gte: startOfDay,
-          $lte: endOfDay,
+          $lte: endOfDay
         },
-        session: finalSession, // ត្រូវតែដាក់ក្នុងលក្ខខណ្ឌស្វែងរក ដាច់ខាត!
+        session: finalSession
       },
       {
-        class: classId,
+        class: finalClassId,
         date: startOfDay,
         session: finalSession,
-        schoolYear: finalSchoolYear, // បញ្ចូលទៅតាមលក្ខខណ្ឌតម្រូវរបស់ Schema
-        records: records.map((record) => ({
-          student: record.student._id || record.student,
-          status: record.status || "present",
-          remark: record.remark || "",
-        })),
+        schoolYear: finalSchoolYear,
+        teacher: classData.teacher || getUserTeacherId(req) || null,
+        markedBy: req.user?._id || null,
+        records: normalizeAttendanceRecords(records)
       },
       {
         new: true,
-        upsert: true, // បើគ្មានទិន្នន័យចាស់ វានឹងបង្កើតទិន្នន័យថ្មី
-        setDefaultsOnInsert: true,
+        upsert: true,
+        runValidators: true,
+        setDefaultsOnInsert: true
       }
     );
 
-    // Populate ទិន្នន័យសិស្សឡើងវិញ មុននឹងបោះទៅ Frontend
-    const result = await AttendanceModel.findById(attendance._id).populate(
-      "records.student",
-      "khmerName englishName studentId gender photo"
+    const result = await populateAttendanceStudents(
+      AttendanceModel.findById(attendance._id)
     );
 
-    return res.status(200).json({
+    return res.status(200).send({
       success: true,
-      message: "Attendance saved successfully.",
-      data: result,
+      msg: "Attendance saved successfully",
+      data: result
     });
   } catch (err) {
-    console.error("Attendance SAVE Error:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message,
+    if (err.code === 11000) {
+      return res.status(409).send({
+        err: "Attendance for this class, date and session already exists"
+      });
+    }
+
+    return res.status(500).send({
+      err: err.message || "Internal server error"
     });
   }
 };
 
 // ==============================
-// GET ATTENDANCE REPORT (ថ្នាក់, ខែ, ឆ្នាំ, សិស្ស)
+// GET ATTENDANCE REPORT
 // ==============================
 exports.getAttendanceReport = async (req, res) => {
   try {
     const { classId, month, year, studentId } = req.query;
 
     if (!classId) {
-      return res.status(400).json({ success: false, message: "Class ID is required." });
+      return res.status(400).send({
+        err: "Class ID is required"
+      });
     }
 
-    // ១. រៀបចំលក្ខខណ្ឌ Filter តាមកាលបរិច្ឆេទ (ខែ និង ឆ្នាំ)
-    let dateQuery = {};
+    if (!isValidObjectId(classId)) {
+      return res.status(400).send({
+        err: "Class ID មិនត្រឹមត្រូវ"
+      });
+    }
+
+    const allowed = await canTeacherAccessClass(req, classId);
+
+    if (!allowed) {
+      return res.status(403).send({
+        err: "អ្នកមិនមានសិទ្ធិមើលរបាយការណ៍វត្តមានថ្នាក់នេះទេ"
+      });
+    }
+
+    const dateQuery = {};
+
     if (year) {
-      let start, end;
+      let start;
+      let end;
+
       if (month) {
-        // Filter តាមខែ និងឆ្នាំជាក់លាក់
-        start = new Date(year, month - 1, 1);
-        end = new Date(year, month, 0, 23, 59, 59, 999);
+        start = new Date(Number(year), Number(month) - 1, 1);
+        end = new Date(Number(year), Number(month), 0, 23, 59, 59, 999);
       } else {
-        // Filter ពេញមួយឆ្នាំ
-        start = new Date(year, 0, 1);
-        end = new Date(year, 11, 31, 23, 59, 59, 999);
+        start = new Date(Number(year), 0, 1);
+        end = new Date(Number(year), 11, 31, 23, 59, 59, 999);
       }
-      dateQuery = { date: { $gte: start, $lte: end } };
+
+      dateQuery.date = {
+        $gte: start,
+        $lte: end
+      };
     }
 
-    // ២. ទាញយកទិន្នន័យវត្តមានពី Database
-    const attendances = await AttendanceModel.find({
-      class: classId,
-      ...dateQuery
-    }).populate("records.student");
+    const attendances = await populateAttendanceStudents(
+      AttendanceModel.find({
+        class: classId,
+        ...dateQuery
+      }).sort({
+        date: 1
+      })
+    );
 
-    // ៣. ទាញយកបញ្ជីឈ្មោះសិស្សទាំងអស់ក្នុងថ្នាក់ ដើម្បីធានាថាសិស្សគ្រប់រូបមានឈ្មោះក្នុងរបាយការណ៍
-    const classData = await ClassesModel.findById(classId).populate("students");
+    const classData = await getClassStudents(classId);
+
     if (!classData) {
-      return res.status(404).json({ success: false, message: "Class not found." });
+      return res.status(404).send({
+        err: "Class not found"
+      });
     }
 
-    // ៤. បង្កើតរចនាសម្ព័ន្ធផ្ទុកទិន្នន័យគណនា (Aggregation Object)
-    let reportMap = {};
-    classData.students.forEach((student) => {
-      reportMap[student._id] = {
+    const reportMap = {};
+
+    /*
+      Include current class students first.
+      Then include old transferred students if they still have historical
+      attendance records in this class.
+    */
+    (classData.students || []).forEach((student) => {
+      reportMap[String(student._id)] = {
         student: {
           _id: student._id,
           studentId: student.studentId,
           khmerName: student.khmerName,
           englishName: student.englishName,
           gender: student.gender,
-          photo: student.photo
+          profileImage: student.profileImage
         },
         present: 0,
         absent: 0,
@@ -236,33 +385,55 @@ exports.getAttendanceReport = async (req, res) => {
       };
     });
 
-    // ៥. ចាប់ផ្តើមគណនារាប់ចំនួនសរុប
     attendances.forEach((sheet) => {
       sheet.records.forEach((record) => {
-        const sId = record.student?._id || record.student;
-        if (reportMap[sId]) {
-          reportMap[sId].totalDays += 1;
+        const student = record.student;
+        const sId = String(student?._id || student || "");
+
+        if (!sId) return;
+
+        if (!reportMap[sId]) {
+          reportMap[sId] = {
+            student: {
+              _id: student?._id || sId,
+              studentId: student?.studentId || "",
+              khmerName: student?.khmerName || "",
+              englishName: student?.englishName || "",
+              gender: student?.gender || "",
+              profileImage: student?.profileImage || ""
+            },
+            present: 0,
+            absent: 0,
+            permission: 0,
+            late: 0,
+            totalDays: 0
+          };
+        }
+
+        reportMap[sId].totalDays += 1;
+
+        if (reportMap[sId][record.status] !== undefined) {
           reportMap[sId][record.status] += 1;
         }
       });
     });
 
-    // បំបែក Object មកជា Array វិញ
     let reportResult = Object.values(reportMap);
 
-    // ៦. ប្រសិនបើមានការតម្រងតាម "សិស្សម្នាក់ៗ" (studentId)
     if (studentId) {
-      reportResult = reportResult.filter(r => r.student._id.toString() === studentId.toString());
+      reportResult = reportResult.filter((item) => {
+        return String(item.student._id) === String(studentId);
+      });
     }
 
-    return res.status(200).json({
+    return res.status(200).send({
       success: true,
       data: reportResult,
       totalAttendanceSheets: attendances.length
     });
-
   } catch (err) {
-    console.error("Report Error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).send({
+      err: err.message || "Internal server error"
+    });
   }
 };

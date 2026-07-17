@@ -26,7 +26,13 @@ const router = Router();
 // Auth
 // ==============================
 
-router.post("/user/signup", createUser);
+// Admin only creates users
+router.post(
+  "/user/signup",
+  protect,
+  authorize("admin"),
+  createUser
+);
 
 router.post("/user/login", loginUser);
 
@@ -36,6 +42,7 @@ router.get("/user/profile", protect, getProfile);
 
 // ==============================
 // Profile Image
+// Logged-in user only
 // ==============================
 
 // PATCH /user/profile-image

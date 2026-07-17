@@ -227,6 +227,7 @@ exports.getOneStudent = async (req, res) => {
 };
 
 // --- UPDATE ---
+// --- UPDATE ---
 exports.updateStudent = async (req, res) => {
   try {
     if (!isAdmin(req)) {
@@ -268,10 +269,65 @@ exports.updateStudent = async (req, res) => {
       payload.profileImage = uploadedImagePath;
     }
 
+    const oldClassId = existingStudent.grade
+      ? String(existingStudent.grade)
+      : "";
+
+    const hasGradeInPayload = Object.prototype.hasOwnProperty.call(
+      payload,
+      "grade"
+    );
+
+    const newClassId = hasGradeInPayload && payload.grade
+      ? String(payload.grade)
+      : oldClassId;
+
+    if (
+      hasGradeInPayload &&
+      payload.grade &&
+      !mongoose.Types.ObjectId.isValid(String(payload.grade))
+    ) {
+      removeUploadedFileIfExists(req);
+
+      return res.status(400).send({
+        err: "Class ID មិនត្រឹមត្រូវ"
+      });
+    }
+
+    if (hasGradeInPayload && payload.grade) {
+      const classExists = await ClassesModel.findById(payload.grade).select("_id");
+
+      if (!classExists) {
+        removeUploadedFileIfExists(req);
+
+        return res.status(404).send({
+          err: "Class not found"
+        });
+      }
+    }
+
     const result = await StudentModel.findByIdAndUpdate(id, payload, {
       new: true,
       runValidators: true
     }).populate("grade", "className classGrade timeStudy teacher");
+
+    if (hasGradeInPayload) {
+      if (oldClassId && oldClassId !== newClassId) {
+        await ClassesModel.findByIdAndUpdate(oldClassId, {
+          $pull: {
+            students: id
+          }
+        });
+      }
+
+      if (newClassId) {
+        await ClassesModel.findByIdAndUpdate(newClassId, {
+          $addToSet: {
+            students: id
+          }
+        });
+      }
+    }
 
     return res.send(result);
   } catch (err) {
