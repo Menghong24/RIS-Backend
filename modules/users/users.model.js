@@ -23,8 +23,20 @@ const usersSchema = new mongoose.Schema(
       index: true
     },
 
+    /*
+      admin + branch = Admin ប្រចាំសាខា
+      admin + branch null = Global Admin
+      teacher/user ត្រូវតែមាន branch
+    */
+    branch: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      default: null,
+      index: true
+    },
+
     // ប្រើសម្រាប់ role teacher
-    // user ម្នាក់ភ្ជាប់ទៅ teacher profile ម្នាក់
+    // User ម្នាក់ភ្ជាប់ទៅ Teacher profile ម្នាក់
     teacher: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Teacher",
@@ -57,17 +69,40 @@ const usersSchema = new mongoose.Schema(
   }
 );
 
-// បើ role = teacher ត្រូវមាន teacher id
 usersSchema.pre("validate", function (next) {
-  if (this.role === "teacher" && !this.teacher) {
+  const role = String(this.role || "")
+    .trim()
+    .toLowerCase();
+
+  this.role = role;
+
+  // Teacher account ត្រូវភ្ជាប់ Teacher profile
+  if (role === "teacher" && !this.teacher) {
     this.invalidate(
       "teacher",
       "Teacher account must be linked to a teacher profile"
     );
   }
 
-  if (this.role !== "teacher") {
+  // Admin និង User មិនត្រូវមាន Teacher profile
+  if (role !== "teacher") {
     this.teacher = null;
+  }
+
+  /*
+    Global admin អាចគ្មាន branch
+
+    Branch admin:
+      role = admin
+      branch = branch ID
+
+    Teacher និង User ត្រូវតែមាន branch
+  */
+  if (role !== "admin" && !this.branch) {
+    this.invalidate(
+      "branch",
+      "This account must be linked to a branch"
+    );
   }
 
   next();
@@ -75,6 +110,13 @@ usersSchema.pre("validate", function (next) {
 
 // Query លឿនសម្រាប់ user list/filter
 usersSchema.index({
+  role: 1,
+  isActive: 1
+});
+
+// Query users តាមសាខា និង role
+usersSchema.index({
+  branch: 1,
   role: 1,
   isActive: 1
 });

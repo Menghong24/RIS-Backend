@@ -1,10 +1,17 @@
-node_modules
+node_modules/
 .env
 
-uploads/*
+# Ignore every uploaded file recursively
+uploads/**
+
+# Keep upload folders
 !uploads/profiles/
-!uploads/profiles/.gitkeep
 !uploads/students/
-!uploads/students/.gitkeep
 !uploads/teachers/
+!uploads/teacher-cvs/
+
+# Keep only .gitkeep files
+!uploads/profiles/.gitkeep
+!uploads/students/.gitkeep
 !uploads/teachers/.gitkeep
+!uploads/teacher-cvs/.gitkeep

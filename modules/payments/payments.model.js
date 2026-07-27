@@ -1,7 +1,17 @@
 const mongoose = require("mongoose");
 
+const PAYMENT_MONTH_PATTERN =
+  /^\d{4}-(0[1-9]|1[0-2])$/;
+
 const paymentSchema = new mongoose.Schema(
   {
+    branch: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      // required: [true, "Branch is required"],
+      index: true
+    },
+
     student: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Student",
@@ -19,16 +29,19 @@ const paymentSchema = new mongoose.Schema(
     teacher: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Teacher",
-      index: true,
-      default: null
+      default: null,
+      index: true
     },
 
-    // YYYY-MM format: 2026-06
+    // YYYY-MM format, for example: 2026-06
     paymentMonth: {
       type: String,
       required: [true, "Payment month is required"],
       trim: true,
-      match: [/^\d{4}-(0[1-9]|1[0-2])$/, "Payment month must be YYYY-MM"],
+      match: [
+        PAYMENT_MONTH_PATTERN,
+        "Payment month must be YYYY-MM"
+      ],
       index: true
     },
 
@@ -42,8 +55,8 @@ const paymentSchema = new mongoose.Schema(
     // ថ្ងៃបានបង់ប្រាក់
     payDate: {
       type: Date,
-      index: true,
-      default: null
+      default: null,
+      index: true
     },
 
     // ថ្លៃសិក្សា
@@ -60,7 +73,7 @@ const paymentSchema = new mongoose.Schema(
       default: 0
     },
 
-    // ចំនួនត្រូវបង់សរុប = tuitionFee + extraFee
+    // tuitionFee + extraFee
     expectedAmount: {
       type: Number,
       min: [0, "Expected amount cannot be negative"],
@@ -74,15 +87,14 @@ const paymentSchema = new mongoose.Schema(
       default: 0
     },
 
-    // រក្សា amount សម្រាប់ code ចាស់
-    // amount = paidAmount
+    // Legacy field: amount = paidAmount
     amount: {
       type: Number,
       min: [0, "Amount cannot be negative"],
       default: 0
     },
 
-    // ចំនួននៅខ្វះ = expectedAmount - paidAmount
+    // expectedAmount - paidAmount
     balance: {
       type: Number,
       min: [0, "Balance cannot be negative"],
@@ -91,7 +103,12 @@ const paymentSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["unpaid", "paid", "late", "partial"],
+      enum: [
+        "unpaid",
+        "paid",
+        "late",
+        "partial"
+      ],
       default: "unpaid",
       index: true
     },
@@ -113,28 +130,42 @@ const paymentSchema = new mongoose.Schema(
   }
 );
 
+// ======================================================
+// Payment calculation helpers
+// ======================================================
+
 const startOfDay = (date = new Date()) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const normalizedDate = new Date(date);
+
+  normalizedDate.setHours(0, 0, 0, 0);
+
+  return normalizedDate;
 };
 
 const normalizeMoney = (value) => {
-  const number = Number(value || 0);
+  const number = Number(value ?? 0);
 
-  if (Number.isNaN(number)) {
+  if (!Number.isFinite(number)) {
     return 0;
   }
 
   return Math.max(number, 0);
 };
 
-const calculateStatus = ({ paidAmount, balance, dueDate }) => {
-  const today = startOfDay(new Date());
-  const due = dueDate ? startOfDay(dueDate) : null;
+const calculateStatus = ({
+  paidAmount,
+  balance,
+  dueDate
+}) => {
+  const today = startOfDay();
+  const due = dueDate
+    ? startOfDay(dueDate)
+    : null;
 
   if (paidAmount <= 0) {
-    return due && today > due ? "late" : "unpaid";
+    return due && today > due
+      ? "late"
+      : "unpaid";
   }
 
   if (balance > 0) {
@@ -151,9 +182,14 @@ const calculatePaymentValues = ({
   amount,
   dueDate
 }) => {
-  const safeTuitionFee = normalizeMoney(tuitionFee);
-  const safeExtraFee = normalizeMoney(extraFee);
-  const expectedAmount = safeTuitionFee + safeExtraFee;
+  const safeTuitionFee =
+    normalizeMoney(tuitionFee);
+
+  const safeExtraFee =
+    normalizeMoney(extraFee);
+
+  const expectedAmount =
+    safeTuitionFee + safeExtraFee;
 
   const rawPaidAmount =
     paidAmount !== undefined
@@ -162,10 +198,19 @@ const calculatePaymentValues = ({
         ? amount
         : 0;
 
-  const safePaidAmount = normalizeMoney(rawPaidAmount);
-  const finalPaidAmount = Math.min(safePaidAmount, expectedAmount);
+  const safePaidAmount =
+    normalizeMoney(rawPaidAmount);
 
-  const balance = Math.max(expectedAmount - finalPaidAmount, 0);
+  // Prevent overpayment
+  const finalPaidAmount = Math.min(
+    safePaidAmount,
+    expectedAmount
+  );
+
+  const balance = Math.max(
+    expectedAmount - finalPaidAmount,
+    0
+  );
 
   const status = calculateStatus({
     paidAmount: finalPaidAmount,
@@ -179,136 +224,375 @@ const calculatePaymentValues = ({
     expectedAmount,
     paidAmount: finalPaidAmount,
     amount: finalPaidAmount,
-    balance: status === "paid" ? 0 : balance,
+    balance:
+      status === "paid" ? 0 : balance,
     status
   };
 };
 
-const applyPaymentCalculationToDoc = function () {
-  const calculated = calculatePaymentValues({
-    tuitionFee: this.tuitionFee,
-    extraFee: this.extraFee,
-    paidAmount: this.paidAmount,
-    amount: this.amount,
-    dueDate: this.dueDate
-  });
+const applyPaymentCalculationToDocument =
+  function () {
+    const calculated =
+      calculatePaymentValues({
+        tuitionFee: this.tuitionFee,
+        extraFee: this.extraFee,
+        paidAmount: this.paidAmount,
+        amount: this.amount,
+        dueDate: this.dueDate
+      });
 
-  this.tuitionFee = calculated.tuitionFee;
-  this.extraFee = calculated.extraFee;
-  this.expectedAmount = calculated.expectedAmount;
-  this.paidAmount = calculated.paidAmount;
-  this.amount = calculated.amount;
-  this.balance = calculated.balance;
-  this.status = calculated.status;
+    this.tuitionFee =
+      calculated.tuitionFee;
 
-  if (calculated.paidAmount <= 0) {
-    this.payDate = null;
-  } else if (!this.payDate) {
-    this.payDate = new Date();
-  }
-};
+    this.extraFee =
+      calculated.extraFee;
 
-paymentSchema.pre("validate", function (next) {
-  applyPaymentCalculationToDoc.call(this);
-  next();
-});
+    this.expectedAmount =
+      calculated.expectedAmount;
 
-paymentSchema.pre("save", function (next) {
-  applyPaymentCalculationToDoc.call(this);
-  next();
-});
+    this.paidAmount =
+      calculated.paidAmount;
 
-paymentSchema.pre("findOneAndUpdate", async function (next) {
-  try {
-    const update = this.getUpdate() || {};
-    const setData = update.$set ? { ...update.$set } : { ...update };
-    const unsetData = update.$unset ? { ...update.$unset } : {};
+    this.amount =
+      calculated.amount;
 
-    const oldDoc = await this.model.findOne(this.getQuery()).lean();
+    this.balance =
+      calculated.balance;
 
-    if (!oldDoc) {
-      return next();
-    }
-
-    const tuitionFee =
-      setData.tuitionFee !== undefined ? setData.tuitionFee : oldDoc.tuitionFee;
-
-    const extraFee =
-      setData.extraFee !== undefined ? setData.extraFee : oldDoc.extraFee;
-
-    const dueDate =
-      setData.dueDate !== undefined ? setData.dueDate : oldDoc.dueDate;
-
-    const paidAmount =
-      setData.paidAmount !== undefined
-        ? setData.paidAmount
-        : setData.amount !== undefined
-          ? setData.amount
-          : oldDoc.paidAmount !== undefined
-            ? oldDoc.paidAmount
-            : oldDoc.amount;
-
-    const calculated = calculatePaymentValues({
-      tuitionFee,
-      extraFee,
-      paidAmount,
-      dueDate
-    });
-
-    const nextSetData = {
-      ...setData,
-      ...calculated
-    };
+    this.status =
+      calculated.status;
 
     if (calculated.paidAmount <= 0) {
-      nextSetData.payDate = null;
-      delete unsetData.payDate;
-    } else if (!nextSetData.payDate && !oldDoc.payDate) {
-      nextSetData.payDate = new Date();
+      this.payDate = null;
+    } else if (!this.payDate) {
+      this.payDate = new Date();
+    }
+  };
+
+// ======================================================
+// Document middleware
+// ======================================================
+
+paymentSchema.pre(
+  "validate",
+  function (next) {
+    if (this.paymentMonth) {
+      this.paymentMonth = String(
+        this.paymentMonth
+      ).trim();
     }
 
-    this.setUpdate({
-      ...update,
-      $set: nextSetData,
-      $unset: unsetData
-    });
+    if (this.remark) {
+      this.remark = String(
+        this.remark
+      ).trim();
+    }
+
+    applyPaymentCalculationToDocument.call(
+      this
+    );
 
     next();
-  } catch (error) {
-    next(error);
   }
-});
+);
 
-// មិនអនុញ្ញាតឱ្យសិស្សម្នាក់បង់ស្ទួនក្នុងថ្នាក់ និងខែដូចគ្នា
+// ======================================================
+// Query update middleware
+// ======================================================
+
+paymentSchema.pre(
+  "findOneAndUpdate",
+  async function (next) {
+    try {
+      const update =
+        this.getUpdate() || {};
+
+      const oldDocument =
+        await this.model
+          .findOne(this.getQuery())
+          .lean();
+
+      if (!oldDocument) {
+        return next();
+      }
+
+      /*
+        Support both:
+
+        findOneAndUpdate(filter, payload)
+
+        and:
+
+        findOneAndUpdate(filter, {
+          $set: payload
+        })
+      */
+      const directFields =
+        Object.fromEntries(
+          Object.entries(update).filter(
+            ([key]) =>
+              !key.startsWith("$")
+          )
+        );
+
+      const setData = {
+        ...directFields,
+        ...(update.$set || {})
+      };
+
+      const unsetData = {
+        ...(update.$unset || {})
+      };
+
+      const incrementData = {
+        ...(update.$inc || {})
+      };
+
+      const getNextMoneyValue = (
+        field
+      ) => {
+        if (setData[field] !== undefined) {
+          return setData[field];
+        }
+
+        if (
+          incrementData[field] !==
+          undefined
+        ) {
+          return (
+            normalizeMoney(
+              oldDocument[field]
+            ) +
+            Number(
+              incrementData[field] || 0
+            )
+          );
+        }
+
+        return oldDocument[field];
+      };
+
+      const tuitionFee =
+        getNextMoneyValue(
+          "tuitionFee"
+        );
+
+      const extraFee =
+        getNextMoneyValue(
+          "extraFee"
+        );
+
+      const dueDate =
+        setData.dueDate !== undefined
+          ? setData.dueDate
+          : oldDocument.dueDate;
+
+      let paidAmount;
+
+      if (
+        setData.paidAmount !== undefined
+      ) {
+        paidAmount =
+          setData.paidAmount;
+      } else if (
+        setData.amount !== undefined
+      ) {
+        paidAmount = setData.amount;
+      } else if (
+        incrementData.paidAmount !==
+        undefined
+      ) {
+        paidAmount =
+          normalizeMoney(
+            oldDocument.paidAmount
+          ) +
+          Number(
+            incrementData.paidAmount ||
+              0
+          );
+      } else if (
+        incrementData.amount !==
+        undefined
+      ) {
+        paidAmount =
+          normalizeMoney(
+            oldDocument.amount
+          ) +
+          Number(
+            incrementData.amount || 0
+          );
+      } else {
+        paidAmount =
+          oldDocument.paidAmount !==
+          undefined
+            ? oldDocument.paidAmount
+            : oldDocument.amount;
+      }
+
+      const calculated =
+        calculatePaymentValues({
+          tuitionFee,
+          extraFee,
+          paidAmount,
+          dueDate
+        });
+
+      const nextSetData = {
+        ...setData,
+        ...calculated
+      };
+
+      /*
+        Calculated fields must not also be
+        modified through $inc or $unset.
+      */
+      [
+        "tuitionFee",
+        "extraFee",
+        "expectedAmount",
+        "paidAmount",
+        "amount",
+        "balance",
+        "status"
+      ].forEach((field) => {
+        delete incrementData[field];
+        delete unsetData[field];
+      });
+
+      if (
+        calculated.paidAmount <= 0
+      ) {
+        nextSetData.payDate = null;
+        delete unsetData.payDate;
+      } else if (
+        setData.payDate !== undefined
+      ) {
+        nextSetData.payDate =
+          setData.payDate;
+      } else if (
+        !oldDocument.payDate
+      ) {
+        nextSetData.payDate =
+          new Date();
+      }
+
+      const nextUpdate = {
+        $set: nextSetData
+      };
+
+      if (
+        Object.keys(unsetData).length >
+        0
+      ) {
+        nextUpdate.$unset =
+          unsetData;
+      }
+
+      if (
+        Object.keys(incrementData)
+          .length > 0
+      ) {
+        nextUpdate.$inc =
+          incrementData;
+      }
+
+      /*
+        Preserve other MongoDB operators.
+      */
+      Object.entries(update).forEach(
+        ([operator, value]) => {
+          if (
+            operator.startsWith("$") &&
+            ![
+              "$set",
+              "$unset",
+              "$inc"
+            ].includes(operator)
+          ) {
+            nextUpdate[operator] =
+              value;
+          }
+        }
+      );
+
+      this.setUpdate(nextUpdate);
+
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
+// ======================================================
+// Indexes
+// ======================================================
+
+// Prevent duplicate monthly payment inside the same branch
 paymentSchema.index(
   {
+    branch: 1,
     student: 1,
     class: 1,
     paymentMonth: 1
   },
   {
-    unique: true
+    unique: true,
+    name: "unique_branch_student_class_payment_month"
   }
 );
 
-// Query លឿនសម្រាប់ report by class/month/status
-paymentSchema.index({
-  class: 1,
-  paymentMonth: 1,
-  status: 1
-});
+// Fast report by branch, class, month and status
+paymentSchema.index(
+  {
+    branch: 1,
+    class: 1,
+    paymentMonth: 1,
+    status: 1
+  },
+  {
+    name: "payment_branch_class_month_status_index"
+  }
+);
 
-// Query លឿនសម្រាប់ student payment history
-paymentSchema.index({
-  student: 1,
-  paymentMonth: -1
-});
+// Fast student payment history
+paymentSchema.index(
+  {
+    branch: 1,
+    student: 1,
+    paymentMonth: -1
+  },
+  {
+    name: "payment_branch_student_history_index"
+  }
+);
 
-// Query លឿនសម្រាប់ teacher/class report
-paymentSchema.index({
-  teacher: 1,
-  paymentMonth: 1,
-  status: 1
-});
+// Fast teacher payment report
+paymentSchema.index(
+  {
+    branch: 1,
+    teacher: 1,
+    paymentMonth: 1,
+    status: 1
+  },
+  {
+    name: "payment_branch_teacher_month_status_index"
+  }
+);
 
-module.exports = mongoose.model("Payment", paymentSchema);
+// Fast overdue and unpaid report
+paymentSchema.index(
+  {
+    branch: 1,
+    status: 1,
+    dueDate: 1
+  },
+  {
+    name: "payment_branch_status_due_date_index"
+  }
+);
+
+module.exports = mongoose.model(
+  "Payment",
+  paymentSchema
+);
