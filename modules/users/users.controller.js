@@ -578,8 +578,8 @@ exports.updateProfileImage = async (
       await UserModel.findById(
         req.user._id
       ).select(
-        "_id profileImage"
-      );
+        "_id profileImage role branch"
+      ); // 🌟 កែតម្រូវត្រង់ចំណុចនេះ
 
     if (!currentUser) {
       removeLocalFile(
@@ -637,8 +637,8 @@ exports.removeProfileImage = async (
       await UserModel.findById(
         req.user._id
       ).select(
-        "_id profileImage"
-      );
+        "_id profileImage role branch"
+      ); // 🌟 កែតម្រូវត្រង់ចំណុចនេះ
 
     if (!currentUser) {
       return res.status(404).send({

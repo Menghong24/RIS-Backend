@@ -126,13 +126,13 @@ app.use(
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
-  "https://m-school-t27v.vercel.app",
   "http://217.217.252.140",
   "https://217.217.252.140",
   "http://217.217.252.140:3000",
-  "http://217.217.252.140:5173"
+  "http://217.217.252.140:5173",
+  "https://ratanainternationalschool.cc",
+  "https://www.ratanainternationalschool.cc"
 ];
-
 if (process.env.FRONTEND_URL) {
   const frontendUrl =
     process.env.FRONTEND_URL.replace(
